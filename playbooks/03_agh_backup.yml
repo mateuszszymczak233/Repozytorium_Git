@@ -78,7 +78,8 @@
           when: old_backups.matched | int > 0
           delegate_to: localhost
           become: false
-
+        - name: TEST – wymuś błąd backupu
+          ansible.builtin.command: /bin/false
       rescue:
         - name: Discord - backup FAILED (task error)
           ansible.builtin.uri:
