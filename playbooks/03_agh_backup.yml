@@ -88,15 +88,15 @@
             body_format: json
             body:
               content: "**BACKUP AdGuard FAILED** na {{ inventory_hostname }}. Sprawdź logi w Semaphore."
+            status_code: 204
           when: notify_webhook_url | length > 0
-          status_code: 204
           delegate_to: localhost
           become: false
+
         - name: Wymuszenie statusu FAILED dla Semaphore
           ansible.builtin.fail:
             msg: "Backup AdGuard Home nie powiódł się. Wysłano powiadomienie."
 
-    
     - name: Zapisz listę hostów nieosiągalnych (SSH)
       ansible.builtin.set_stats:
         data:
