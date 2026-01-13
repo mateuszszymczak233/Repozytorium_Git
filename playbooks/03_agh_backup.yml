@@ -1,0 +1,117 @@
+
+- name: Playbook 3 - Backup AdGuard Home (archive + fetch to controller)
+  hosts: agh
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+
+  vars:
+    agh_dir: "/adguardhome/AdGuardHome"
+
+    remote_tmp_dir: "/tmp/agh_backup"
+
+    controller_backup_dir: "/opt/semaphore/backups/adguardhome"
+    retention_days: 14
+
+  tasks:
+    - block:
+        - name: Sprawdź czy katalog AdGuard istnieje
+          ansible.builtin.stat:
+            path: "{{ agh_dir }}"
+          register: agh_dir_stat
+
+        - name: Przerwij jeśli brak katalogu AdGuard
+          ansible.builtin.fail:
+            msg: "Nie znaleziono {{ agh_dir }} na {{ inventory_hostname }}. Ustaw poprawnie agh_dir."
+          when: not agh_dir_stat.stat.exists
+
+        - name: Ustal timestamp (na AGH)
+          ansible.builtin.command: date +%Y%m%d_%H%M%S
+          register: ts
+          changed_when: false
+
+        - name: Utwórz katalog tymczasowy na AGH
+          ansible.builtin.file:
+            path: "{{ remote_tmp_dir }}"
+            state: directory
+            mode: "0755"
+
+        - name: Utwórz archiwum AdGuard Home na AGH
+          ansible.builtin.archive:
+            path: "{{ agh_dir }}"
+            dest: "{{ remote_tmp_dir }}/AdGuardHome_{{ inventory_hostname }}_{{ ts.stdout }}.tar.gz"
+            format: gz
+
+        - name: Upewnij się, że katalog backupów na kontrolerze istnieje
+          ansible.builtin.file:
+            path: "{{ controller_backup_dir }}"
+            state: directory
+            mode: "0755"
+          delegate_to: localhost
+          become: true
+
+        - name: Pobierz archiwum na kontroler Ansible (Ansible_{nazwisko})
+          ansible.builtin.fetch:
+            src: "{{ remote_tmp_dir }}/AdGuardHome_{{ inventory_hostname }}_{{ ts.stdout }}.tar.gz"
+            dest: "{{ controller_backup_dir }}/"
+            flat: true
+
+        - name: Posprzątaj pliki tymczasowe na AGH
+          ansible.builtin.file:
+            path: "{{ remote_tmp_dir }}"
+            state: absent
+
+        - name: Retencja - usuń backupy starsze niż {{ retention_days }} dni (na kontrolerze)
+          ansible.builtin.find:
+            paths: "{{ controller_backup_dir }}"
+            patterns: "AdGuardHome_{{ inventory_hostname }}_*.tar.gz"
+            age: "{{ retention_days }}d"
+          register: old_backups
+          delegate_to: localhost
+          become: true
+
+        - name: Usuń stare backupy
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_backups.files }}"
+          when: old_backups.matched | int > 0
+          delegate_to: localhost
+          become: true
+
+      rescue:
+        - name: Discord - backup FAILED (task error)
+          ansible.builtin.uri:
+            url: "{{ NOTIFY_WEBHOOK_URL }}"
+            method: POST
+            body_format: json
+            body:
+              content: "**BACKUP AdGuard FAILED** na {{ inventory_hostname }}. Sprawdź logi w Semaphore."
+            status_code: 204
+          delegate_to: localhost
+
+        - name: Wymuszenie statusu FAILED dla Semaphore
+          ansible.builtin.fail:
+            msg: "Backup AdGuard Home nie powiódł się. Wysłano powiadomienie."
+
+    
+    - name: Zapisz listę hostów nieosiągalnych (SSH)
+      ansible.builtin.set_stats:
+        data:
+          agh_unreachable_hosts: "{{ ansible_play_hosts_all | difference(ansible_play_hosts) }}"
+      run_once: true
+      delegate_to: localhost
+
+- name: Discord alert gdy host unreachable (brak SSH)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Wyślij alert jeśli któryś host był unreachable
+      ansible.builtin.uri:
+        url: "{{ NOTIFY_WEBHOOK_URL }}"
+        method: POST
+        body_format: json
+        body:
+          content: "**BACKUP AdGuard**: Host unreachable (brak SSH): {{ agh_unreachable_hosts | join(', ') }}"
+        status_code: 204
+      when: (agh_unreachable_hosts | default([]) | length) > 0
