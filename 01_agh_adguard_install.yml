@@ -1,0 +1,88 @@
+
+- name: Playbook 1 - AdGuard Home + LVM RAID1 + Firewall
+  hosts: agh
+  become: true
+  vars:
+    adg_vg: "adg_vg"
+    adg_lv: "adg_lv"
+    adg_mount: "/adguardhome"
+    adg_fs: "ext4"
+
+  tasks:
+    - name: 1. Instalacja pakietów systemowych
+      ansible.builtin.apt:
+        update_cache: true
+        name: [lvm2, curl, ufw, tar]
+        state: present
+
+    - name: 2. Tworzenie Grupy Woluminów (VG) na dwóch dyskach
+      community.general.lvg:
+        vg: "{{ adg_vg }}"
+        pvs: "{{ adg_disks }}"
+        state: present
+
+    - name: Sprawdzenie czy LV już istnieje
+      command: lvs /dev/{{ adg_vg }}/{{ adg_lv }}
+      register: agh_lv_check
+      failed_when: false
+      changed_when: false
+
+    - name: 3. Tworzenie Woluminu Logicznego (LV) w trybie RAID1
+      community.general.lvol:
+        vg: "{{ adg_vg }}"
+        lv: "{{ adg_lv }}"
+        size: 18000
+        opts: "--type raid1 -m1"
+        state: present
+      when: agh_lv_check.rc != 0
+
+    - name: 4. Formatowanie woluminu (ext4)
+      community.general.filesystem:
+        fstype: "{{ adg_fs }}"
+        dev: "/dev/{{ adg_vg }}/{{ adg_lv }}"
+
+    - name: 5. Montowanie woluminu w /adguardhome
+      ansible.builtin.mount:
+        path: "{{ adg_mount }}"
+        src: "/dev/{{ adg_vg }}/{{ adg_lv }}"
+        fstype: "{{ adg_fs }}"
+        state: mounted
+
+    - name: 6. Pobieranie instalatora AdGuard Home
+      ansible.builtin.get_url:
+        url: "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz"
+        dest: "/tmp/adg.tar.gz"
+
+    - name: 7. Rozpakowanie AdGuard Home
+      ansible.builtin.unarchive:
+        src: "/tmp/adg.tar.gz"
+        dest: "{{ adg_mount }}"
+        remote_src: true
+
+    - name: 8. Instalacja usługi AdGuard Home
+      ansible.builtin.command:
+        cmd: "./AdGuardHome -s install"
+        chdir: "{{ adg_mount }}/AdGuardHome"
+        creates: "/etc/systemd/system/AdGuardHome.service"
+
+    - name: 9. Konfiguracja Firewall (UFW) - Blokuj wszystko
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    - name: 10. Firewall - Pozwól na SSH
+      community.general.ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: 11. Firewall - Pozwól na AdGuard Home (Panel i DNS)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: any
+      loop:
+        - '3000' # Panel instalacyjny
+        - '80'   # Panel WWW
+        - '53'   # DNS

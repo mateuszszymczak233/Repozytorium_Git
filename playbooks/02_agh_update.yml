@@ -1,0 +1,42 @@
+
+- name: Playbook 2 - Aktualizacja AGH + Powiadomienie Discord
+  hosts: agh
+  become: true
+
+  vars:
+    notify_webhook_url: "{{ lookup('env', 'NOTIFY_WEBHOOK_URL') | default('', true) }}"
+
+  tasks:
+    - block:
+        - name: 1. Aktualizacja listy pakietów
+          ansible.builtin.apt:
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: 2. Instalacja aktualizacji
+          ansible.builtin.apt:
+            upgrade: dist
+
+        - name: 3. Sprawdzenie czy wymagany restart
+          ansible.builtin.stat:
+            path: /var/run/reboot-required
+          register: reboot_required
+
+        - name: 4. Restart jeśli potrzebny
+          ansible.builtin.reboot:
+            msg: "Restart po aktualizacji (Ansible)"
+          when: reboot_required.stat.exists
+
+      rescue:
+        - name: WYSYŁANIE POWIADOMIENIA NA DISCORD
+          ansible.builtin.uri:
+            url: "{{ notify_webhook_url }}"
+            method: POST
+            body_format: json
+            body:
+              content: "⚠️ŁĄD AKTUALIZACJIna serwerze: `{{ inventory_hostname }}`! Sprawdź logi w Semaphore UI."
+          when: notify_webhook_url | length > 0
+
+        - name: Wymuszenie statusu FAILED dla Semaphore
+          ansible.builtin.fail:
+            msg: "Aktualizacja nie powiodła się. Wysłano powiadomienie na Discord."
