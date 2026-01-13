@@ -27,6 +27,8 @@
             msg: "Restart po aktualizacji (Ansible)"
           when: reboot_required.stat.exists
 
+        - name: Wymuś błąd testowy
+          command: /bin/false
       rescue:
         - name: WYSYŁANIE POWIADOMIENIA NA DISCORD
           ansible.builtin.uri:
@@ -34,7 +36,7 @@
             method: POST
             body_format: json
             body:
-              content: "⚠️ŁĄD AKTUALIZACJIna serwerze: `{{ inventory_hostname }}`! Sprawdź logi w Semaphore UI."
+              content: "⚠️BŁĄD AKTUALIZACJIna serwerze: `{{ inventory_hostname }}`! Sprawdź logi w Semaphore UI."
           when: notify_webhook_url | length > 0
 
         - name: Wymuszenie statusu FAILED dla Semaphore
