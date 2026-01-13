@@ -68,7 +68,7 @@
             age: "{{ retention_days }}d"
           register: old_backups
           delegate_to: localhost
-          become: true
+          become: false
 
         - name: Usuń stare backupy
           ansible.builtin.file:
@@ -77,7 +77,7 @@
           loop: "{{ old_backups.files }}"
           when: old_backups.matched | int > 0
           delegate_to: localhost
-          become: true
+          become: false
 
       rescue:
         - name: Discord - backup FAILED (task error)
