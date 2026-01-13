@@ -88,7 +88,7 @@
             body_format: json
             body:
               content: "**BACKUP AdGuard FAILED** na {{ inventory_hostname }}. Sprawdź logi w Semaphore."
-            when: notify_webhook_url | length > 0
+          when: notify_webhook_url | length > 0
             status_code: 204
           delegate_to: localhost
           become: false
