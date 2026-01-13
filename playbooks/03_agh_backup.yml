@@ -48,7 +48,7 @@
             state: directory
             mode: "0755"
           delegate_to: localhost
-          become: true
+          become: false
 
         - name: Pobierz archiwum na kontroler Ansible (Ansible_{nazwisko})
           ansible.builtin.fetch:
