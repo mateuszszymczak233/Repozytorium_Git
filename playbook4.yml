@@ -1,0 +1,90 @@
+---
+- name: Konfiguracja WINSRV - Storage, Users, Share, Apps
+  hosts: winsrv
+  gather_facts: no
+  vars:
+    surname: "Szymczak"
+    group_name: "Kierownicy_Szymczak"
+    share_name: "Projekty_Szymczak"
+    share_path: "F:\\Projekty"
+
+  tasks:
+    - name: 1. Sprawdz czy Pula istnieje
+      win_shell: Get-StoragePool -FriendlyName "StoragePool"
+      register: pool_check
+      ignore_errors: yes
+
+    - name: 2. Utworz Virtual Disk i formatuj F
+      win_shell: |
+        $vdName = "VirtualDisk"
+        if (-not (Get-VirtualDisk -FriendlyName $vdName -ErrorAction SilentlyContinue)) {
+            New-VirtualDisk -StoragePoolFriendlyName "StoragePool" -FriendlyName $vdName -Size 20GB -ResiliencySettingName Mirror -ProvisioningType Fixed
+            Start-Sleep -Seconds 5
+            $disk = Get-VirtualDisk -FriendlyName $vdName | Get-Disk
+            $disk | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -DriveLetter F -UseMaximumSize | Format-Volume -FileSystem ReFS -Confirm:$false
+        }
+      when: pool_check.rc == 0
+
+    - name: 3. Utworz uzytkownikow
+      win_user:
+        name: "{{ item.name }}"
+        password: "Haslo123!"
+        state: present
+      loop:
+        - { name: 'MarekRomanek' }
+        - { name: 'JacekGula' }
+
+    - name: 4. Utworz grupe
+      win_group:
+        name: "{{ group_name }}"
+        state: present
+
+    - name: 5. Dodaj uzytkownikow do grupy
+      win_group_membership:
+        name: "{{ group_name }}"
+        members: ["MarekRomanek", "JacekGula"]
+        state: present
+
+    - name: 6. Utworz katalog na F
+      win_file:
+        path: "{{ share_path }}"
+        state: directory
+
+    - name: 7. Udostepnij katalog (Share)
+      win_share:
+        name: "{{ share_name }}"
+        path: "{{ share_path }}"
+        full_access: "Administrators,{{ group_name }}"
+
+    - name: 8. Instalacja aplikacji (winget) - Idempotentnie
+      win_shell: |
+        winget source update
+        $apps = winget list --id {{ item }} -e --accept-source-agreements
+        if ($apps -match "{{ item }}") {
+            Write-Output "AlreadyInstalled"
+        } else {
+            winget install --id {{ item }} -e --accept-package-agreements --accept-source-agreements
+        }
+      loop:
+        - "7zip.7zip"
+        - "ISC.Bind"
+        - "Mozilla.Firefox"
+      register: winget_result
+      changed_when: "'AlreadyInstalled' not in winget_result.stdout"
+      ignore_errors: yes
+
+    - name: 9. Wpis do rejestru (Blokada usuwania drukarek)
+      win_shell: |
+        $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers"
+        if (-not (Test-Path $path)) {
+            New-Item -Path $path -Force | Out-Null
+        }
+        $val = Get-ItemProperty -Path $path -Name "NoDeletePrinter" -ErrorAction SilentlyContinue
+        if ($null -eq $val -or $val.NoDeletePrinter -ne 1) {
+            New-ItemProperty -Path $path -Name "NoDeletePrinter" -Value 1 -PropertyType DWord -Force | Out-Null
+            Write-Output "Changed"
+        } else {
+            Write-Output "AlreadySet"
+        }
+      register: reg_result
+      changed_when: "'Changed' in reg_result.stdout"
